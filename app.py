@@ -1,14 +1,9 @@
 import streamlit as st
 import torch
 import os
-from torch.serialization import add_safe_globals
-from ultralytics.nn.tasks import DetectionModel
-from ultralytics import YOLO
 from PIL import Image
 import numpy as np
-
-# Allow YOLOv8 model loading
-add_safe_globals({'ultralytics.nn.tasks.DetectionModel': DetectionModel})
+from ultralytics import YOLO
 
 # Define path to model
 MODEL_PATH = "yolov8n.pt"
@@ -17,8 +12,6 @@ MODEL_PATH = "yolov8n.pt"
 @st.cache_resource
 def load_model():
     try:
-        if not os.path.exists(MODEL_PATH):
-            st.warning("🔄 Model file not found. Attempting to download YOLOv8n...")
         model = YOLO(MODEL_PATH)  # This will automatically download if missing
         st.success("✅ Model loaded successfully!")
         return model
@@ -41,9 +34,11 @@ uploaded_file = st.file_uploader("📤 Upload an image", type=["jpg", "jpeg", "p
 if uploaded_file is not None:
     image = Image.open(uploaded_file).convert("RGB")
     st.image(image, caption="📷 Uploaded Image", use_container_width=True)
-
+    
     if st.button("🔍 Detect Objects"):
         with st.spinner("🧠 Running detection..."):
             model = load_model()
             result_image = detect_objects(np.array(image), model)
             st.image(result_image, caption="📌 Detected Objects", use_container_width=True)
+else:
+    st.info("👆 Upload an image to detect retail objects")
