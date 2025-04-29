@@ -1,9 +1,6 @@
 # ---------------------------
 # Install necessary packages (if not already)
 # ---------------------------
-!pip install ultralytics --quiet
-!pip install opencv-python --quiet
-!pip install matplotlib --quiet
 
 # ---------------------------
 # Import modules
