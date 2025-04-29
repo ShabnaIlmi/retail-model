@@ -1,5 +1,14 @@
 import streamlit as st
-from ultralytics import YOLO
+import subprocess
+import sys
+
+# Ensure ultralytics is installed
+try:
+    from ultralytics import YOLO
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "ultralytics==8.0.40"])
+    from ultralytics import YOLO
+
 import numpy as np
 import cv2
 import uuid
@@ -8,25 +17,41 @@ from collections import Counter
 from PIL import Image
 import io
 
-# Load the YOLO model
-model = YOLO("models/retail_model.pt")
+# --- Function to connect to MySQL ---
+def connect_to_db():
+    try:
+        conn = mysql.connector.connect(
+            host="localhost",  
+            user="root",
+            password="",
+            database="retail_db"
+        )
+        return conn
+    except mysql.connector.Error as err:
+        st.error(f"❌ Database connection failed: {err}")
+        return None
 
-# Connect to MySQL
-conn = mysql.connector.connect(
-    host="localhost",  
-    user="root",
-    password="",
-    database="retail_db"
-)
-cursor = conn.cursor()
+# --- Load the YOLO Model ---
+@st.cache_resource
+def load_model():
+    return YOLO("models/retail_model.pt")
 
-# Streamlit UI
+model = load_model()
+
+# --- Connect to Database ---
+conn = connect_to_db()
+if conn:
+    cursor = conn.cursor()
+else:
+    st.stop()
+
+# --- Streamlit UI ---
 st.title("📦 Retail Stock Detection")
 
-# --- NEW: Choose Input Method ---
+# Choose Input Method
 input_method = st.radio("Choose input method:", ("Upload from PC", "Capture from Camera"))
 
-frame = None  # Initialize frame variable
+frame = None
 
 if input_method == "Upload from PC":
     uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
@@ -47,17 +72,18 @@ if frame is not None:
     # Detect objects
     results = model.predict(frame)
     labels = results[0].names
-    detections = results[0].boxes.data.cpu().numpy()
+    detections = results[0].boxes.data.cpu().numpy() if results[0].boxes.data is not None else []
 
-    detected_items = [labels[int(det[5])] for det in detections]
-    counts = Counter(detected_items)
+    if len(detections) > 0:
+        detected_items = [labels[int(det[5])] for det in detections]
+        counts = Counter(detected_items)
 
-    # Display image and detections
-    annotated_img = results[0].plot()
-    st.image(cv2.cvtColor(annotated_img, cv2.COLOR_BGR2RGB), caption="Detected Items", use_column_width=True)
+        # Display annotated image
+        annotated_img = results[0].plot()
+        st.image(cv2.cvtColor(annotated_img, cv2.COLOR_BGR2RGB), caption="Detected Items", use_column_width=True)
 
-    if counts:
         st.subheader("Detected Items")
+
         for item, count in counts.items():
             st.write(f"🔸 {item}: {count}")
 
@@ -66,15 +92,18 @@ if frame is not None:
             _, buffer = cv2.imencode('.jpg', frame)
             img_bytes = buffer.tobytes()
 
-            # Insert into database
-            cursor.execute("""
-                INSERT INTO detection_data (id, item_name, quantity, image)
-                VALUES (%s, %s, %s, %s)
-            """, (unique_id, item, count, img_bytes))
+            # Insert detection data into the database
+            try:
+                cursor.execute("""
+                    INSERT INTO detection_data (id, item_name, quantity, image)
+                    VALUES (%s, %s, %s, %s)
+                """, (unique_id, item, count, img_bytes))
+                conn.commit()
+            except mysql.connector.Error as err:
+                st.error(f"❌ Failed to save data: {err}")
 
-        conn.commit()
-        st.success("✅ Detection data saved to database!")
+        st.success("✅ Detection data saved to database successfully!")
     else:
-        st.warning("No items detected.")
+        st.warning("⚠️ No items detected in the image.")
 else:
     st.info("👆 Please upload an image or capture a photo to start detection.")
