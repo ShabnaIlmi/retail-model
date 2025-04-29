@@ -1,7 +1,7 @@
-streamlit==1.25.0
-mysql-connector-python==8.0.28
-ultralytics==8.0.40
-opencv-python==4.5.5.64
-Pillow==9.0.0
-matplotlib==3.5.1
-numpy==1.21.2
+streamlit==1.42.2
+ultralytics
+opencv-python
+pillow
+mysql-connector-python
+numpy
+rich==13.3.2
