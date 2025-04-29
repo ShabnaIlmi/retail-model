@@ -31,10 +31,11 @@ def connect_to_db():
         st.error(f"❌ Database connection failed: {err}")
         return None
 
-# --- Load the YOLO Model ---
+# --- Load the YOLO Model (pre-trained) ---
 @st.cache_resource
 def load_model():
-    return YOLO("models/retail_model.pt")
+    # Load pre-trained YOLO model from the ultralytics library (YOLOv8)
+    return YOLO("yolov8n.pt")  # This uses the small version of the pre-trained YOLOv8 model, trained on COCO dataset
 
 model = load_model()
 
