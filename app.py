@@ -10,55 +10,77 @@ import subprocess
 import sys
 import requests
 
+# Set page configuration
 st.set_page_config(page_title="Retail Object Detection", layout="wide")
 
-# --- Install required packages ---
-def install_package(package):
-    st.info(f"📦 Installing {package}...")
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-        st.success(f"✅ Successfully installed {package}")
-        return True
-    except Exception as e:
-        st.error(f"❌ Failed to install {package}: {e}")
-        return False
-
-# Try importing YOLO, install if needed
-try:
-    from ultralytics import YOLO
-except ImportError:
-    if install_package("ultralytics"):
+# --- Install required packages if needed ---
+def install_packages():
+    required_packages = ["ultralytics", "opencv-python", "numpy", "pillow"]
+    for package in required_packages:
         try:
-            from ultralytics import YOLO
+            __import__(package.replace("-", "_"))
         except ImportError:
-            st.error("❌ Failed to import YOLO after installation")
-            st.stop()
+            st.info(f"📦 Installing {package}...")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", package])
 
-# --- Download YOLOv8n model if needed ---
-MODEL_PATH = "yolov8n.pt"
-MODEL_URL = "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.pt"
+# Install packages if needed
+install_packages()
+
+# Import YOLO after ensuring it's installed
+from ultralytics import YOLO
+
+# Download model if not exists
+MODEL_PATH = "yolov8m.pt"  # Using yolov8m.pt as in your Colab example
+MODEL_URL = "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8m.pt"
 
 def download_model():
-    st.info("📥 Downloading YOLOv8n model file...")
-    try:
-        r = requests.get(MODEL_URL, stream=True)
-        with open(MODEL_PATH, 'wb') as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
-        st.success("✅ Model downloaded successfully.")
-        return True
-    except Exception as e:
-        st.error(f"❌ Failed to download model: {e}")
-        return False
+    if not os.path.exists(MODEL_PATH):
+        st.info(f"📥 Downloading YOLOv8m model file...")
+        try:
+            r = requests.get(MODEL_URL, stream=True)
+            with open(MODEL_PATH, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            st.success("✅ Model downloaded successfully")
+        except Exception as e:
+            st.error(f"❌ Failed to download model: {e}")
+            st.stop()
 
-# Check if model exists, download if needed
-if not os.path.exists(MODEL_PATH):
-    if not download_model():
+# Ensure model file exists
+download_model()
+
+# --- Preprocess image function (similar to your Colab code) ---
+def preprocess_image(img):
+    """Preprocess image for YOLO model"""
+    # Convert PIL Image to numpy array if needed
+    if isinstance(img, Image.Image):
+        img = np.array(img)
+    
+    # Resize to 640x640
+    img_resized = cv2.resize(img, (640, 640))
+    
+    # Convert to RGB (YOLO expects RGB)
+    if len(img_resized.shape) == 3 and img_resized.shape[2] == 3:
+        img_rgb = cv2.cvtColor(img_resized, cv2.COLOR_BGR2RGB)
+    else:
+        img_rgb = img_resized  # Already RGB or grayscale
+        
+    return img_rgb
+
+# --- Load the YOLO model ---
+@st.cache_resource
+def load_model():
+    try:
+        # Load model directly like in your Colab example
+        model = YOLO(MODEL_PATH)
+        st.success("✅ Model loaded successfully")
+        return model
+    except Exception as e:
+        st.error(f"❌ Failed to load model: {str(e)}")
         st.stop()
 
-# --- Database connection ---
-@st.cache_resource
-def init_db_connection():
+# --- Connect to MySQL database ---
+def connect_to_db():
     try:
         conn = mysql.connector.connect(
             host="localhost",
@@ -66,130 +88,155 @@ def init_db_connection():
             password="",
             database="retail_db"
         )
-        st.success("✅ Database connected successfully")
         return conn
-    except mysql.connector.Error as e:
-        st.error(f"❌ Database connection failed: {e}")
+    except Exception as e:
+        st.error(f"❌ Database connection failed: {str(e)}")
         return None
 
-# --- Load YOLO model ---
-@st.cache_resource
-def init_model():
-    try:
-        # Use a direct path to the model file
-        model_path = os.path.abspath(MODEL_PATH)
-        st.info(f"Loading model from: {model_path}")
-        
-        # Initialize YOLO with task explicitly defined
-        model = YOLO(model_path, task='detect')
-        
-        # Verify model loaded properly
-        st.success("✅ Model loaded successfully")
-        return model
-    except Exception as e:
-        st.error(f"❌ Could not load the YOLO model: {str(e)}")
-        st.stop()
-
-# Initialize database and model
-conn = init_db_connection()
-try:
-    model = init_model()
-except Exception as e:
-    st.error(f"❌ Model initialization failed: {str(e)}")
-    st.stop()
-
-# --- Image Processing ---
-def process_image(img):
-    """Process input image to ensure compatibility with YOLO"""
-    # If PIL Image, convert to numpy array
-    if isinstance(img, Image.Image):
-        img = np.array(img)
-    
-    # Ensure RGB format (YOLO expects RGB)
-    if len(img.shape) == 2:  # Grayscale
-        img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-    elif img.shape[2] == 3 and isinstance(img[0,0,0], np.uint8):  # Possibly BGR
-        # We'll assume BGR format from OpenCV and convert to RGB
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    
-    return img
-
-# --- Streamlit UI ---
+# --- Main UI ---
 st.title("🛍️ Retail Object Detection App")
 
+# Load model
+model = load_model()
+
+# Connect to database
+db_conn = connect_to_db()
+
+# Input selection
 input_option = st.radio("Choose image input:", ["Upload from PC", "Capture from Camera"])
-processed_image = None
 
 if input_option == "Upload from PC":
     uploaded_file = st.file_uploader("Upload Image", type=["jpg", "jpeg", "png"])
     if uploaded_file:
-        try:
-            image = Image.open(uploaded_file).convert('RGB')
-            processed_image = process_image(image)
-            st.image(processed_image, caption="Uploaded Image", use_column_width=True)
-        except Exception as e:
-            st.error(f"❌ Error processing uploaded image: {str(e)}")
-
-elif input_option == "Capture from Camera":
-    camera_input = st.camera_input("Take a picture")
-    if camera_input:
-        try:
-            image = Image.open(camera_input).convert('RGB')
-            processed_image = process_image(image)
-            st.image(processed_image, caption="Captured Image", use_column_width=True)
-        except Exception as e:
-            st.error(f"❌ Error processing camera image: {str(e)}")
-
-# Run detection if image is available
-if processed_image is not None:
-    if st.button("🔍 Detect Objects"):
-        try:
+        # Read and display the image
+        image = Image.open(uploaded_file).convert('RGB')
+        st.image(image, caption="Uploaded Image", use_column_width=True)
+        
+        if st.button("🔍 Detect Objects"):
+            # Preprocess image
+            preprocessed_image = preprocess_image(np.array(image))
+            
+            # Run inference
             with st.spinner("Running detection..."):
-                # Run inference
-                results = model(processed_image)
+                results = model.predict(preprocessed_image)
                 
                 # Get labels and detections
                 labels = results[0].names
-                detections = results[0].boxes.data.cpu().numpy() if hasattr(results[0].boxes, 'data') else []
+                detections = results[0].boxes.data.cpu().numpy()
                 
+                # Process detections
+                detected_items = []
                 if len(detections) > 0:
-                    # Get detected items and counts
-                    detected_items = [labels[int(d[5])] for d in detections]
+                    for det in detections:
+                        cls_id = int(det[5])  # Get class id
+                        detected_items.append(labels[cls_id])
+                    
+                    # Count detections
                     counts = Counter(detected_items)
                     
                     # Display annotated image
-                    annotated_img = results[0].plot()
-                    st.image(annotated_img, caption="Detected Objects", use_column_width=True)
+                    annotated_frame = results[0].plot()
+                    st.image(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB), 
+                             caption="Detected Objects", use_column_width=True)
                     
-                    # Display results
-                    st.subheader("Detected Items:")
+                    # Display counts
+                    st.subheader("📦 Detected Stock Items:")
                     for item, count in counts.items():
                         st.write(f"🔹 {item}: {count}")
                     
-                    # Save to database if connection exists
-                    if conn:
-                        cursor = conn.cursor()
+                    # Save to database if connected
+                    if db_conn:
+                        cursor = db_conn.cursor()
                         try:
                             for item, count in counts.items():
                                 unique_id = str(uuid.uuid4())
                                 
-                                # Convert image to bytes for storage
-                                success, buffer = cv2.imencode('.jpg', processed_image)
-                                img_bytes = buffer.tobytes() if success else None
+                                # Convert image to bytes
+                                img_pil = Image.fromarray(np.array(image))
+                                img_byte_arr = io.BytesIO()
+                                img_pil.save(img_byte_arr, format='JPEG')
+                                img_bytes = img_byte_arr.getvalue()
                                 
-                                if img_bytes:
-                                    cursor.execute("""
-                                        INSERT INTO detection_data (id, item_name, quantity, image)
-                                        VALUES (%s, %s, %s, %s)
-                                    """, (unique_id, item, count, img_bytes))
+                                # Insert into database
+                                cursor.execute("""
+                                    INSERT INTO detection_data (id, item_name, quantity, image)
+                                    VALUES (%s, %s, %s, %s)
+                                """, (unique_id, item, count, img_bytes))
                             
-                            conn.commit()
-                            st.success("✅ Detection results saved to database")
+                            db_conn.commit()
+                            st.success("✅ Results saved to database")
                         except Exception as e:
                             st.error(f"❌ Database error: {str(e)}")
                 else:
-                    st.warning("⚠️ No objects detected in the image")
-        except Exception as e:
-            st.error(f"❌ Detection error: {str(e)}")
+                    st.warning("⚠️ No objects detected")
+
+elif input_option == "Capture from Camera":
+    camera_input = st.camera_input("Take a picture")
+    if camera_input:
+        # Read and display the image
+        image = Image.open(camera_input).convert('RGB')
+        st.image(image, caption="Captured Image", use_column_width=True)
+        
+        if st.button("🔍 Detect Objects"):
+            # Preprocess image
+            preprocessed_image = preprocess_image(np.array(image))
+            
+            # Run inference
+            with st.spinner("Running detection..."):
+                results = model.predict(preprocessed_image)
+                
+                # Get labels and detections
+                labels = results[0].names
+                detections = results[0].boxes.data.cpu().numpy()
+                
+                # Process detections
+                detected_items = []
+                if len(detections) > 0:
+                    for det in detections:
+                        cls_id = int(det[5])  # Get class id
+                        detected_items.append(labels[cls_id])
+                    
+                    # Count detections
+                    counts = Counter(detected_items)
+                    
+                    # Display annotated image
+                    annotated_frame = results[0].plot()
+                    st.image(cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB), 
+                             caption="Detected Objects", use_column_width=True)
+                    
+                    # Display counts
+                    st.subheader("📦 Detected Stock Items:")
+                    for item, count in counts.items():
+                        st.write(f"🔹 {item}: {count}")
+                    
+                    # Save to database if connected
+                    if db_conn:
+                        cursor = db_conn.cursor()
+                        try:
+                            for item, count in counts.items():
+                                unique_id = str(uuid.uuid4())
+                                
+                                # Convert image to bytes
+                                img_pil = Image.fromarray(np.array(image))
+                                img_byte_arr = io.BytesIO()
+                                img_pil.save(img_byte_arr, format='JPEG')
+                                img_bytes = img_byte_arr.getvalue()
+                                
+                                # Insert into database
+                                cursor.execute("""
+                                    INSERT INTO detection_data (id, item_name, quantity, image)
+                                    VALUES (%s, %s, %s, %s)
+                                """, (unique_id, item, count, img_bytes))
+                            
+                            db_conn.commit()
+                            st.success("✅ Results saved to database")
+                        except Exception as e:
+                            st.error(f"❌ Database error: {str(e)}")
+                else:
+                    st.warning("⚠️ No objects detected")
+
 else:
     st.info("📸 Please upload or capture an image to continue")
+
+# Add import for BytesIO
+import io
