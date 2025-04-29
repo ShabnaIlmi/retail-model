@@ -1,7 +1,7 @@
-streamlit==1.42.2
-ultralytics
+ultralytics==8.0.219
 opencv-python
-pillow
-mysql-connector-python
 numpy
+pillow
+streamlit
+mysql-connector-python
 rich==13.3.2
